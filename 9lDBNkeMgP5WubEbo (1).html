@@ -1,0 +1,372 @@
+<html><head><base href="https://sugarflower.online">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sugar Flower - עיצוב עוגות בתלת מימד</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;700&display=swap');
+
+  body {
+    font-family: 'Heebo', sans-serif;
+    direction: rtl;
+  }
+
+  #dashboard, #floating-menu {
+    display: none;
+  }
+
+  #floating-menu {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+  }
+
+  .flower-item {
+    cursor: grab;
+    width: 80px;
+    height: 80px;
+  }
+
+  .flower-item:active {
+    cursor: grabbing;
+  }
+
+  #pin-cursor {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    display: none;
+  }
+</style>
+</head>
+<body class="bg-gradient-to-br from-pink-100 to-blue-100 min-h-screen">
+  <div id="floating-menu" class="bg-white rounded-full shadow-lg px-4 py-2">
+    <button id="back-button" class="text-gray-600 hover:text-gray-800 px-2">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+      </svg>
+    </button>
+  </div>
+
+  <div id="home" class="flex flex-col items-center justify-center h-screen">
+    <h1 class="text-5xl font-bold text-primary mb-8">Sugar Flower</h1>
+    <p class="text-2xl mb-8">עיצוב עוגות בתלת מימד</p>
+    <button id="start-button" class="bg-purple-500 text-white px-8 py-3 rounded-full text-lg font-semibold hover:bg-purple-600 transition-colors duration-300">התחל לעצב</button>
+  </div>
+
+  <div id="dashboard" class="flex h-screen">
+    <div id="canvas-container" class="flex-grow"></div>
+    <div id="control-panel" class="w-80 bg-white p-4 overflow-y-auto">
+      <h2 class="text-2xl font-bold mb-4">לוח בקרה</h2>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">מספר קומות</label>
+        <input type="range" id="layers" min="1" max="5" value="1" class="w-full">
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">צבע עוגה</label>
+        <input type="color" id="cake-color" value="#ffcccb" class="w-full">
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">צורת עוגה</label>
+        <select id="cake-shape" class="w-full p-2 border rounded">
+          <option value="cylinder">עגולה</option>
+          <option value="box">מרובעת</option>
+          <option value="hexagon">משושה</option>
+        </select>
+      </div>
+
+      <div class="mb-4">
+        <h3 class="text-lg font-semibold mb-2">פרחים</h3>
+        <div id="flower-list" class="grid grid-cols-2 gap-2">
+          <div class="flower-item bg-gray-100 p-2 rounded" draggable="true" data-flower="flower1"></div>
+          <div class="flower-item bg-gray-100 p-2 rounded" draggable="true" data-flower="flower2"></div>
+          <div class="flower-item bg-gray-100 p-2 rounded" draggable="true" data-flower="flower3"></div>
+          <div class="flower-item bg-gray-100 p-2 rounded" draggable="true" data-flower="flower4"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pin-cursor" class="w-4 h-4">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="red">
+      <circle cx="10" cy="10" r="8" fill="white"/>
+      <circle cx="10" cy="10" r="4"/>
+    </svg>
+  </div>
+
+  <script>
+    let scene, camera, renderer, controls, cake;
+    let currentPage = 'home';
+    const history = ['home'];
+    let raycaster, mouse;
+    let pinCursor;
+    let isDragging = false;
+    let draggedFlower = null;
+    let flowerPreviews = {};
+
+    const flowerTypes = ['flower1', 'flower2', 'flower3', 'flower4'];
+
+    function initThreeJS() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      
+      const container = document.getElementById('canvas-container');
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.25;
+      controls.enableZoom = true;
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      scene.add(ambientLight);
+
+      const pointLight = new THREE.PointLight(0xffffff, 1);
+      pointLight.position.set(5, 5, 5);
+      scene.add(pointLight);
+
+      camera.position.z = 10;
+
+      raycaster = new THREE.Raycaster();
+      mouse = new THREE.Vector2();
+
+      createCake();
+
+      window.addEventListener('resize', onWindowResize, false);
+      renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+      renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+
+      animate();
+      loadFlowerPreviews();
+    }
+
+    function createCake() {
+      if (cake) {
+        scene.remove(cake);
+      }
+
+      cake = new THREE.Group();
+
+      const layers = parseInt(document.getElementById('layers').value);
+      const cakeColor = document.getElementById('cake-color').value;
+      const shape = document.getElementById('cake-shape').value;
+
+      for (let i = 0; i < layers; i++) {
+        let layerGeometry;
+        const layerHeight = 1.5;
+        const layerRadius = 3 - (i * 0.5);
+
+        switch (shape) {
+          case 'cylinder':
+            layerGeometry = new THREE.CylinderGeometry(layerRadius, layerRadius, layerHeight, 32);
+            break;
+          case 'box':
+            layerGeometry = new THREE.BoxGeometry(layerRadius * 2, layerHeight, layerRadius * 2);
+            break;
+          case 'hexagon':
+            layerGeometry = new THREE.CylinderGeometry(layerRadius, layerRadius, layerHeight, 6);
+            break;
+        }
+
+        const layerMaterial = new THREE.MeshPhongMaterial({ color: cakeColor });
+        const layer = new THREE.Mesh(layerGeometry, layerMaterial);
+        layer.position.y = i * layerHeight;
+        cake.add(layer);
+      }
+
+      cake.position.y = -(layers * 1.5) / 2;
+      scene.add(cake);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+
+      for (let flower in flowerPreviews) {
+        if (flowerPreviews[flower]) {
+          flowerPreviews[flower].rotation.y += 0.01;
+        }
+      }
+    }
+
+    function showPage(page) {
+      document.getElementById('home').style.display = page === 'home' ? 'flex' : 'none';
+      document.getElementById('dashboard').style.display = page === 'dashboard' ? 'flex' : 'none';
+      document.getElementById('floating-menu').style.display = page === 'dashboard' ? 'block' : 'none';
+      
+      if (page === 'dashboard' && !scene) {
+        initThreeJS();
+      }
+      
+      currentPage = page;
+      history.push(page);
+      updateNavigationButtons();
+    }
+
+    function updateNavigationButtons() {
+      const backButton = document.getElementById('back-button');
+      backButton.disabled = history.length <= 1;
+      backButton.classList.toggle('opacity-50', backButton.disabled);
+    }
+
+    function onMouseMove(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      if (isDragging) {
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(cake, true);
+
+        if (intersects.length > 0) {
+          pinCursor.style.display = 'block';
+          pinCursor.style.left = `${event.clientX}px`;
+          pinCursor.style.top = `${event.clientY}px`;
+        } else {
+          pinCursor.style.display = 'none';
+        }
+      }
+    }
+
+    function onMouseUp(event) {
+      if (isDragging && draggedFlower) {
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(cake, true);
+
+        if (intersects.length > 0) {
+          const intersectionPoint = intersects[0].point;
+          addFlowerToCake(draggedFlower, intersectionPoint);
+        }
+
+        isDragging = false;
+        draggedFlower = null;
+        pinCursor.style.display = 'none';
+      }
+    }
+
+    function addFlowerToCake(flowerType, position) {
+      const loader = new THREE.GLTFLoader();
+      const placeholderUrl = `https://example.com/models/${flowerType}.glb`;
+      loader.load(placeholderUrl, (gltf) => {
+        const flower = gltf.scene;
+        flower.position.copy(position);
+        flower.scale.set(0.1, 0.1, 0.1);
+        cake.add(flower);
+      }, undefined, (error) => {
+        console.error(`Error adding ${flowerType} to cake:`, error);
+        const fallbackGeometry = new THREE.SphereGeometry(0.1, 32, 32);
+        const fallbackMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const fallbackFlower = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+        fallbackFlower.position.copy(position);
+        cake.add(fallbackFlower);
+      });
+    }
+
+    function loadFlowerPreviews() {
+      const loader = new THREE.GLTFLoader();
+      
+      flowerTypes.forEach((flowerType, index) => {
+        const placeholderUrl = `https://example.com/models/${flowerType}.glb`;
+        loader.load(placeholderUrl, (gltf) => {
+          const flowerPreview = gltf.scene;
+          flowerPreview.scale.set(0.05, 0.05, 0.05);
+          flowerPreview.position.set(0, 0, 0);
+
+          const previewScene = new THREE.Scene();
+          const previewCamera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+          previewCamera.position.z = 2;
+
+          const previewRenderer = new THREE.WebGLRenderer({ alpha: true });
+          previewRenderer.setSize(80, 80);
+
+          const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+          previewScene.add(ambientLight);
+
+          const pointLight = new THREE.PointLight(0xffffff, 1);
+          pointLight.position.set(5, 5, 5);
+          previewScene.add(pointLight);
+
+          previewScene.add(flowerPreview);
+
+          const flowerItem = document.querySelector(`[data-flower="${flowerType}"]`);
+          flowerItem.appendChild(previewRenderer.domElement);
+
+          flowerPreviews[flowerType] = {
+            scene: previewScene,
+            camera: previewCamera,
+            renderer: previewRenderer,
+            model: flowerPreview
+          };
+
+          function animatePreview() {
+            requestAnimationFrame(animatePreview);
+            flowerPreview.rotation.y += 0.01;
+            previewRenderer.render(previewScene, previewCamera);
+          }
+          animatePreview();
+        }, undefined, (error) => {
+          console.error(`Error loading ${flowerType} model:`, error);
+          createFallbackPreview(flowerType, index);
+        });
+      });
+    }
+
+    function createFallbackPreview(flowerType, index) {
+      const flowerItem = document.querySelector(`[data-flower="${flowerType}"]`);
+      flowerItem.textContent = `Flower ${index + 1}`;
+      flowerItem.style.display = 'flex';
+      flowerItem.style.alignItems = 'center';
+      flowerItem.style.justifyContent = 'center';
+      flowerItem.style.fontSize = '14px';
+      flowerItem.style.fontWeight = 'bold';
+    }
+
+    document.getElementById('start-button').addEventListener('click', () => {
+      showPage('dashboard');
+    });
+
+    document.getElementById('back-button').addEventListener('click', () => {
+      if (history.length > 1) {
+        history.pop();
+        showPage(history[history.length - 1]);
+      }
+    });
+
+    ['layers', 'cake-color', 'cake-shape'].forEach(id => {
+      document.getElementById(id).addEventListener('change', createCake);
+    });
+
+    const flowerItems = document.querySelectorAll('.flower-item');
+    flowerItems.forEach(item => {
+      item.addEventListener('dragstart', (e) => {
+        isDragging = true;
+        draggedFlower = e.target.dataset.flower;
+        pinCursor = document.getElementById('pin-cursor');
+      });
+    });
+
+    document.addEventListener('dragend', () => {
+      isDragging = false;
+      draggedFlower = null;
+      pinCursor.style.display = 'none';
+    });
+  </script>
+</body></html>
